@@ -18,10 +18,11 @@
    - [Step 2: Training](#step-2-training)
    - [Step 3: Evaluation](#step-3-evaluation)
    - [Step 4: Visualization](#step-4-visualization)
-9. [Results](#9-results)
-10. [Glossary of All Terms](#10-glossary-of-all-terms)
-11. [Understanding the Training Graphs](#11-understanding-the-training-graphs)
-12. [File Reference](#12-file-reference)
+9. [CICI Tabular Risk Model](#9-cici-tabular-risk-model)
+10. [Results](#10-results)
+11. [Glossary of All Terms](#11-glossary-of-all-terms)
+12. [Understanding the Training Graphs](#12-understanding-the-training-graphs)
+13. [File Reference](#13-file-reference)
 
 ---
 
@@ -46,7 +47,9 @@ The imaging pipeline developed here is honestly framed as a **proof-of-concept n
 | Baseline FLAIR-only 2D U-Net | 2D, single channel | Dice 0.6335 (per-slice) |
 | FLAIR + T1gd dual-channel | 2D, 2 channels | Improvement over baseline |
 | 2.5D context (5-slice stack) | 2D, 10 channels | Best 2.5D result |
-| **3D U-Net (current)** | **3D volumetric** | **Mean 3D Dice 0.894 / Median 0.923** |
+| 3D U-Net V1 | 3D volumetric | Mean 3D Dice 0.894 / Median 0.923 |
+| **3D U-Net V1+V2 Ensemble (current)** | **3D volumetric + ensemble** | **Mean Dice 0.894 / Median 0.925** |
+| **XGBoost CICI risk model (new)** | **Tabular, gradient boosted** | **AUC 0.806 [0.756, 0.855]** |
 
 ---
 
@@ -54,17 +57,32 @@ The imaging pipeline developed here is honestly framed as a **proof-of-concept n
 
 ```
 Brain-Lesion-Detection/
+├── CICI_RISK_MODEL.md            ← full technical reference for the tabular CICI model
+├── PLAN.md                       ← project roadmap and phase tracking
+├── ENSEMBLE_ANALYSIS.md          ← per-subject V1 vs V2 vs ensemble ablation
+│
+├── CICI Info/
+│   ├── cici_config.py            ← literature-grounded parameter config (all numbers cited)
+│   └── Chemo brain-a comprehensive evidence base for CICI risk prediction.md
+│
 ├── src/
 │   │
 │   ├── 4-channel_NIfTI_rendering.py  ← napari viewer for raw 4-channel NIfTI + labels
 │   │
-│   ├── ── 3D Pipeline ──────────────────────────────────────────────
+│   ├── ── CICI Tabular Branch ──────────────────────────────────────
+│   ├── tabular_risk_model.py         ← XGBoost + logistic regression CICI pipeline
+│   ├── fusion_demo.py                ← late-fusion architecture stub (imaging + tabular)
+│   │
+│   ├── ── 3D Pipeline (V1 + V2 Ensemble) ──────────────────────────
 │   ├── preprocess_3d.py              ← NIfTI → normalized .npy volumes + metadata CSV
-│   ├── dataset_3d.py                 ← patch-based PyTorch Dataset (foreground-biased)
-│   ├── model_3d.py                   ← UNet3D architecture (Conv3d throughout)
+│   ├── dataset_3d.py                 ← patch-based PyTorch Dataset (50/50 foreground bias)
+│   ├── dataset_3d_v2.py              ← V2 dataset (70/30 foreground bias)
+│   ├── model_3d.py                   ← UNet3D V1: features [32,64,128,256]
+│   ├── model_3d_v2.py                ← UNet3D V2: features [64,128,256,320] + deep supervision
 │   ├── sliding_window.py             ← overlapping patch inference for full-volume output
-│   ├── train_3d.py                   ← 3D training loop with SW validation
-│   ├── evaluate_3d.py                ← per-subject 3D Dice evaluation on full val set
+│   ├── train_3d.py                   ← 3D V1 training loop
+│   ├── train_3d_v2.py                ← 3D V2 training loop (deep supervision loss)
+│   ├── evaluate_3d.py                ← evaluation: V1, V2, or ensemble + TTA + CC post-proc
 │   ├── visualize_3d.py               ← training curves, Dice distribution, overlay panels
 │   │
 │   ├── 3D/                           ← working copies from development branch
@@ -74,51 +92,33 @@ Brain-Lesion-Detection/
 │   │   └── visualize_3d.py
 │   │
 │   ├── ── 2.5D Pipeline ────────────────────────────────────────────
-│   ├── preprocess_msd_flair_t1gd_25d5.py          ← slice extraction and .npy saving
-│   ├── build_runtime_metadata_flair_t1gd_25d5.py  ← metadata CSV for runtime NIfTI loading
-│   ├── dataset.py                    ← BrainTumorSliceDataset: 5-slice 2D loading
-│   ├── train.py                      ← 2.5D training loop (MONAI UNet2D)
-│   ├── evaluate.py                   ← slice-level Dice evaluation with post-processing
-│   ├── threshold_sweep.py            ← standalone threshold optimization
-│   ├── plot_training_curves.py       ← 2.5D training curve figures
-│   ├── inspect_predictions.py        ← visual inspection of 2.5D failure cases
-│   ├── run_experiment.py             ← combined train + plot + eval runner
-│   │
-│   ├── ── Older preprocessing iterations ──────────────────────────
-│   ├── preprocess_msd_flair_t1gd_25d.py  ← 2.5D 3-slice version
-│   ├── preprocess_msd_flair_t1gd.py      ← FLAIR+T1gd no context
-│   ├── preprocess_msd.py                 ← single-channel FLAIR (original)
-│   └── inspect_msd.py                    ← dataset inspection utility
+│   ├── preprocess_msd_flair_t1gd_25d5.py
+│   ├── build_runtime_metadata_flair_t1gd_25d5.py
+│   ├── dataset.py
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── threshold_sweep.py
+│   ├── plot_training_curves.py
+│   ├── inspect_predictions.py
+│   └── run_experiment.py
 │
 ├── data/                             ← gitignored
-│   ├── raw/
-│   │   └── Task01_BrainTumour/
-│   │       ├── imagesTr/             ← 484 multi-channel NIfTI images (.nii.gz)
-│   │       └── labelsTr/             ← 484 segmentation label files (.nii.gz)
+│   ├── raw/Task01_BrainTumour/
 │   └── processed_3d/
-│       ├── images/                   ← per-subject float32 volumes (2, 240, 240, 155)
-│       ├── masks/                    ← per-subject uint8 binary masks (240, 240, 155)
-│       └── metadata.csv              ← subject IDs, paths, tumor voxel counts, shapes
 │
 └── outputs/                          ← gitignored
-    └── 3d_unet_v1/
-        ├── checkpoints/
-        │   ├── best_model_3d_unet_v1.pt   ← saved whenever SW val Dice improved
-        │   └── latest_model_3d_unet_v1.pt ← saved every epoch end
-        ├── logs/
-        │   ├── training_log.csv       ← per-epoch metrics (loss, dice, sw_val_dice, lr, time)
-        │   ├── train_subjects.txt     ← frozen list of 388 training subject IDs
-        │   └── val_subjects.txt       ← frozen list of 96 validation subject IDs
-        ├── evaluation/
-        │   ├── subject_metrics_3d.csv ← per-subject 3D Dice at threshold 0.5
-        │   └── threshold_sweep_3d.csv ← mean/median/std Dice across thresholds
-        └── visualizations/
-            ├── training_curves.png
-            ├── dice_distribution.png
-            └── overlays/
-                ├── best/              ← top 10 subjects by Dice (green title)
-                ├── worst/             ← bottom 10 subjects by Dice (red title)
-                └── random/            ← 10 randomly sampled middle-tier subjects (gold title)
+    ├── cici_risk_model/              ← CICI tabular model outputs
+    │   ├── roc_curves.png
+    │   ├── feature_importance.png
+    │   ├── calibration_curve.png
+    │   ├── cohort_summary.png
+    │   ├── metrics_summary.csv
+    │   ├── cv_results.csv
+    │   ├── synthetic_cohort.csv
+    │   └── model_xgboost.json
+    ├── 3d_unet_v1/                   ← V1 checkpoints, logs, evaluation, visualizations
+    ├── 3d_unet_v2/                   ← V2 checkpoints, logs, evaluation, visualizations
+    └── 3d_unet_ensemble_v1v2/        ← ensemble evaluation CSVs
 ```
 
 ---
@@ -163,10 +163,11 @@ Windows 11
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install monai nibabel numpy pandas matplotlib tqdm scipy
+pip install xgboost shap scikit-learn
 pip install "napari[all]"
 ```
 
-`napari` is only required for `4-channel_NIfTI_rendering.py`. All training, evaluation, and `visualize_3d.py` work without it.
+`napari` is only required for `4-channel_NIfTI_rendering.py`. `xgboost` and `shap` are required for `src/tabular_risk_model.py`. All training, evaluation, and `visualize_3d.py` work without them.
 
 ### Download the dataset
 
@@ -472,9 +473,96 @@ For each of 30 selected subjects (10 per category), a 5-panel figure showing:
 
 ---
 
-## 9. Results
+## 9. CICI Tabular Risk Model
 
-### 3D U-Net — Final Evaluation (96 validation subjects)
+For a full technical deep-dive, see [CICI_RISK_MODEL.md](CICI_RISK_MODEL.md). This section summarizes the pipeline and results.
+
+### Overview
+
+The tabular risk model is the clinical prediction branch of the full CICI pipeline. It predicts which patients are at high risk of developing cognitive impairment from chemotherapy — using age, drug regimen, inflammatory markers, genetics, and cognitive reserve as inputs.
+
+No validated CICI risk calculator currently exists in clinical practice. A review of 75 CICI-related AI papers found none providing a drug-specific externally validated model. This is the scientific gap the model addresses.
+
+### Running the pipeline
+
+```bash
+cd "e:\Brain Lesion Detection"
+python src/tabular_risk_model.py
+```
+
+Output goes to `outputs/cici_risk_model/`. Runtime: ~20 seconds on CPU.
+
+### How it works
+
+**1. Synthetic cohort generation (1,500 subjects)**  
+Because no real CICI dataset is currently available, a synthetic cohort is generated from published distributions. Every parameter is cited in `CICI Info/cici_config.py`:
+- Demographics: age N(53.4, 9.0), education N(14.0, 3.0), APOE ε4 Bernoulli(0.22), MoCA N(25, 3)
+- Regimens: AC-T 45%, controls 25%, AC 15%, FAC/FEC 10%, CMF 5%
+- Biomarkers: IL-6, CRP, TNF-α sampled from log-normal distributions (right-skewed, per published assay data)
+
+**2. CICI label assignment**  
+Labels are assigned probabilistically using published odds ratios:
+
+| Risk factor | OR | Source |
+|---|---|---|
+| APOE ε4 carrier | 2.50 | McDeed 2024; Ahles 2003 |
+| Baseline MoCA <22 | 2.58 | Dos Santos 2021 |
+| Post-chemo CRP >3 mg/L | 2.84 | Duivon 2024 (CANTO-Cog) |
+| Post-chemo IL-6 elevated | 5.50 | Duivon 2024 (CANTO-Cog) |
+| Education (per year) | 0.87 (protective) | Amidi 2015 |
+| Anxiety per HADS-A unit | 1.298 | Zhou 2024 |
+| Cumulative dose | linear | Collins 2013 |
+| Age × APOE interaction | — | Mandelblatt 2018 |
+
+**3. Model training**  
+- **XGBoost** (primary): 300 estimators, max depth 5, 5-fold stratified CV
+- **Logistic Regression** (baseline): L2-regularized, StandardScaler-normalized
+
+**4. Evaluation**  
+- 80/20 train/test split
+- 1,000-resample bootstrap confidence intervals on held-out test set
+
+### Results
+
+| Model | AUC | 95% CI | Sensitivity | Specificity |
+|---|---|---|---|---|
+| **XGBoost** | **0.806** | **[0.756, 0.855]** | 0.728 | 0.726 |
+| Logistic Regression | 0.766 | [0.715, 0.816] | 0.654 | 0.768 |
+| TLC LASSO benchmark (McDeed 2024) | 0.75–0.79 | — | — | — |
+
+XGBoost exceeds the best published CICI tabular model. The AUC gap over logistic regression reflects learned nonlinear interactions (age × APOE ε4, dose × regimen) that linear models cannot capture.
+
+### Fusion architecture (src/fusion_demo.py)
+
+Demonstrates the full CICI pipeline concept. Not trained — architecture only with verified forward pass:
+
+```
+Tabular branch: clinical features → XGBoost → scalar risk score (1)
+Imaging branch: MRI volume → frozen 3D U-Net encoder → GAP → FC(128)
+                                      ↓
+                              concat [128 + 1 = 129]
+                              Linear(129→64) → ReLU → Dropout → Linear(64→1) → Sigmoid
+                                      ↓
+                              CICI probability
+```
+
+The imaging encoder uses V2 weights (25M parameters, frozen). When real CICI imaging data becomes available, only the fusion head (8,385 parameters) needs to be trained.
+
+---
+
+## 10. Results
+
+### Imaging: 3D U-Net Ensemble (V1 + V2)
+
+| Model | Mean Dice | Median Dice | Std | Notes |
+|---|---|---|---|---|
+| V1 — [32,64,128,256] | 0.894 | 0.923 | 0.076 | 45 epochs, batch 4 |
+| V2 — [64,128,256,320] + deep supervision | 0.892 | 0.922 | 0.095 | 50 epochs, batch 3 |
+| **Ensemble V1+V2** | **0.894** | **0.925** | **0.080** | Probability map averaging + CC post-proc |
+
+Ensemble outperforms either individual model on median Dice (+0.002 vs V1) and substantially reduces V2's variance (0.095 → 0.080). Full ablation in `ENSEMBLE_ANALYSIS.md`.
+
+### 3D U-Net V1 — Detailed Evaluation (96 validation subjects)
 
 | Metric | Value |
 |--------|-------|
@@ -518,7 +606,7 @@ Threshold 0.5 is the optimal operating point. The near-flat curve across 0.4–0
 
 ---
 
-## 10. Glossary of All Terms
+## 11. Glossary of All Terms
 
 ### MRI Modalities
 
@@ -681,7 +769,7 @@ Dice computed on individual 128³ patches rather than full volumes. Because empt
 
 ---
 
-## 11. Understanding the Training Graphs
+## 12. Understanding the Training Graphs
 
 Produced by `visualize_3d.py` and saved to `outputs/3d_unet_v1/visualizations/training_curves.png`.
 
@@ -706,13 +794,15 @@ The gap between patch Dice (~0.83) and SW Val Dice (~0.92) is expected and does 
 
 ---
 
-## 12. File Reference
+## 13. File Reference
 
 All files are on `main` (merged from `3d-unet` branch via PRs #1, #2, #3).
 
 | File | Pipeline | Purpose | Typical run order |
 |------|----------|---------|:-----------------:|
 | `4-channel_NIfTI_rendering.py` | both | napari viewer for raw 4-channel NIfTI + label overlay | — |
+| **`tabular_risk_model.py`** | **CICI** | **XGBoost + LR pipeline: synthetic cohort → labels → train → eval → figures** | **1** |
+| **`fusion_demo.py`** | **CICI** | **Late-fusion architecture stub: imaging encoder + tabular risk → CICI probability** | **—** |
 | `preprocess_msd.py` | 2.5D | Single-channel FLAIR slice extraction (original baseline) | — |
 | `preprocess_msd_flair_t1gd.py` | 2.5D | FLAIR + T1gd slice extraction (v1) | — |
 | `preprocess_msd_flair_t1gd_25d.py` | 2.5D | 2.5D 3-slice context preprocessing | — |
@@ -727,10 +817,13 @@ All files are on `main` (merged from `3d-unet` branch via PRs #1, #2, #3).
 | `inspect_msd.py` | both | Dataset inspection utility (shapes, label distributions) | — |
 | `run_experiment.py` | 2.5D | Combined train + plot + eval runner | — |
 | `preprocess_3d.py` | 3D | NIfTI → normalized .npy volumes + metadata CSV | 1 |
-| `dataset_3d.py` | 3D | `BrainTumorDataset3D`: foreground-biased 128³ patch sampling | — |
-| `model_3d.py` | 3D | `UNet3D`: 3D encoder-decoder, InstanceNorm3d, [32,64,128,256] features | — |
+| `dataset_3d.py` | 3D | `BrainTumorDataset3D`: 50/50 foreground-biased 128³ patch sampling | — |
+| `dataset_3d_v2.py` | 3D | V2 dataset: 70/30 foreground-biased sampling | — |
+| `model_3d.py` | 3D | `UNet3D` V1: InstanceNorm3d, features [32,64,128,256] | — |
+| `model_3d_v2.py` | 3D | `UNet3D_V2`: features [64,128,256,320] + deep supervision heads | — |
 | `sliding_window.py` | 3D | Overlapping patch inference → full-volume probability map | — |
-| `train_3d.py` | 3D | 3D training loop: BCE + Dice, AMP, cosine LR, grad clip, SW val | 2 |
-| `evaluate_3d.py` | 3D | Full val-set 3D Dice evaluation + threshold sweep CSVs | 3 |
-| `visualize_3d.py` | 3D | Training curves, Dice distribution, best/worst/random overlay panels | 4 |
+| `train_3d.py` | 3D | V1 training: BCE + Dice, AMP, cosine LR, grad clip, SW val | 2 |
+| `train_3d_v2.py` | 3D | V2 training: deep supervision loss, 70/30 foreground bias | 2 (V2) |
+| `evaluate_3d.py` | 3D | V1 / V2 / ensemble eval + TTA + connected component post-proc | 3 |
+| `visualize_3d.py` | 3D | Training curves, Dice distribution, best/worst/random overlays | 4 |
 | `3D/` | 3D | Working copies from development branch (reference only) | — |

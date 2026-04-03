@@ -1,9 +1,12 @@
+import sys
 from pathlib import Path
 import pandas as pd
 
-from evaluate import run_evaluation
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from evaluation.evaluate import run_evaluation
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT_NAME = "flair_t1gd_binary"
 
 OUT_ROOT = PROJECT_ROOT / "outputs" / EXPERIMENT_NAME

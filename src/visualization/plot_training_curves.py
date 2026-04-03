@@ -3,7 +3,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 EXPERIMENT_NAME = "flair_t1gd_25d5_binary"
 LOG_CSV = PROJECT_ROOT / "outputs" / EXPERIMENT_NAME / "logs" / "training_log.csv"

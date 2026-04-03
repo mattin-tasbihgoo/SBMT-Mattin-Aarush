@@ -1,10 +1,8 @@
-"""Train a 3D U-Net V2 for volumetric brain tumor segmentation.
+"""Train a 3D U-Net for volumetric brain tumor segmentation.
 
-V2 changes vs train_3d.py:
-  - Larger model: features [64, 128, 256, 320] with deep supervision
-  - Dataset: 70/30 foreground-biased sampling + intensity augmentation
-  - Batch size 2 (tighter VRAM with larger model)
-  - Deep supervision loss: weighted sum of main + 3 auxiliary heads
+Reuses subject split, loss design, logging, and checkpoint conventions
+from the 2.5D train.py but operates on (128,128,128) patches extracted
+by BrainTumorDataset3D, with sliding-window validation.
 """
 
 import sys
@@ -16,20 +14,19 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "3D"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dataset_3d_v2 import BrainTumorDataset3D_V2
-from model_3d_v2 import UNet3D_V2
-from sliding_window import sliding_window_inference
+from data.dataset_3d import BrainTumorDataset3D
+from models.model_3d import UNet3D
+from evaluation.sliding_window import sliding_window_inference
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # ── Data ─────────────────────────────────────────────────────────────
 DATA_ROOT = PROJECT_ROOT / "data" / "processed_3d"
@@ -38,7 +35,7 @@ MSK_DIR = DATA_ROOT / "masks"
 META_CSV = DATA_ROOT / "metadata.csv"
 
 # ── Experiment ───────────────────────────────────────────────────────
-EXPERIMENT_NAME = "3d_unet_v2"
+EXPERIMENT_NAME = "3d_unet_v1"
 OUT_ROOT = PROJECT_ROOT / "outputs" / EXPERIMENT_NAME
 CKPT_DIR = OUT_ROOT / "checkpoints"
 LOG_DIR = OUT_ROOT / "logs"
@@ -54,26 +51,31 @@ REFERENCE_VAL_SUBJECTS_TXT = REFERENCE_SPLIT_LOG_DIR / "val_subjects.txt"
 # ── Hyperparameters ──────────────────────────────────────────────────
 PATCH_SIZE = (128, 128, 128)
 PATCHES_PER_SUBJECT = 4
-BATCH_SIZE = 3
-NUM_WORKERS = 12
+BATCH_SIZE = 4
+NUM_WORKERS = 8
 EPOCHS = 50
 LR = 1e-4
 VAL_FRAC = 0.20
-RANDOM_SEED = 41
+RANDOM_SEED = 42
 GRAD_CLIP_NORM = 1.0
 POSTFIX_EVERY = 5
 
+# Loss
+LOSS_NAME = "BCE + Dice"
 LOSS_BCE_WEIGHT = 0.5
 LOSS_DICE_WEIGHT = 0.5
-DS_WEIGHTS = [0.5, 0.25, 0.125]
 
+# Sliding-window validation
 SW_OVERLAP = 0.5
 SW_THRESHOLD = 0.5
+
+# How many subjects to run sliding-window eval on each epoch
+# (full eval is expensive; set to 0 to skip per-epoch SW eval)
 VAL_SW_SUBJECTS = 5
 
 # ─────────────────────────────────────────────────────────────────────
 
-bce_fn = nn.BCEWithLogitsLoss()
+bce = nn.BCEWithLogitsLoss()
 
 
 def dice_loss(logits, targets, eps=1e-6):
@@ -84,17 +86,7 @@ def dice_loss(logits, targets, eps=1e-6):
 
 
 def combined_loss(logits, targets):
-    return LOSS_BCE_WEIGHT * bce_fn(logits, targets) + LOSS_DICE_WEIGHT * dice_loss(logits, targets)
-
-
-def deep_supervision_loss(outputs, targets):
-    main_logits = outputs[0]
-    loss = combined_loss(main_logits, targets)
-    for aux_logits, w in zip(outputs[1:], DS_WEIGHTS):
-        aux_up = F.interpolate(aux_logits, size=targets.shape[2:],
-                               mode="trilinear", align_corners=False)
-        loss = loss + w * combined_loss(aux_up, targets)
-    return loss
+    return LOSS_BCE_WEIGHT * bce(logits, targets) + LOSS_DICE_WEIGHT * dice_loss(logits, targets)
 
 
 def dice_scores(logits, targets, thr=0.5, eps=1e-6):
@@ -121,12 +113,14 @@ def resolve_subject_split(all_subjects: set[str]):
     if REFERENCE_TRAIN_SUBJECTS_TXT.exists() and REFERENCE_VAL_SUBJECTS_TXT.exists():
         train_subjects = load_subject_list(REFERENCE_TRAIN_SUBJECTS_TXT)
         val_subjects = load_subject_list(REFERENCE_VAL_SUBJECTS_TXT)
+
         missing = sorted((set(train_subjects) | set(val_subjects)) - all_subjects)
         overlap = sorted(set(train_subjects) & set(val_subjects))
         if missing:
             raise RuntimeError("Reference split subjects missing:\n" + "\n".join(missing[:20]))
         if overlap:
             raise RuntimeError("Split overlap:\n" + "\n".join(overlap[:20]))
+
         return train_subjects, val_subjects, f"loaded from {REFERENCE_SPLIT_LOG_DIR}"
 
     subjects = sorted(all_subjects)
@@ -153,29 +147,31 @@ def main():
 
     print(f"Experiment: {EXPERIMENT_NAME}")
     print(f"Split source: {split_source}")
-    print(f"Train: {len(train_subjects)}  |  Val: {len(val_subjects)}")
-    print(f"Patch: {PATCH_SIZE}  |  Patches/subj: {PATCHES_PER_SUBJECT}")
-    print(f"Batch: {BATCH_SIZE}  |  Epochs: {EPOCHS}  |  LR: {LR}")
-    print(f"DS weights: {DS_WEIGHTS}")
+    print(f"Train subjects: {len(train_subjects)}")
+    print(f"Val subjects:   {len(val_subjects)}")
+    print(f"Patch size: {PATCH_SIZE}")
+    print(f"Patches/subject: {PATCHES_PER_SUBJECT}")
+    print(f"Batch size: {BATCH_SIZE}")
+    print(f"Epochs: {EPOCHS}")
+    print(f"LR: {LR}")
+    print(f"Loss: {LOSS_NAME}")
 
     (LOG_DIR / "train_subjects.txt").write_text("\n".join(train_subjects))
     (LOG_DIR / "val_subjects.txt").write_text("\n".join(val_subjects))
 
-    train_ds = BrainTumorDataset3D_V2(
+    train_ds = BrainTumorDataset3D(
         train_subjects, str(IMG_DIR), str(MSK_DIR),
         patch_size=PATCH_SIZE,
         patches_per_subject=PATCHES_PER_SUBJECT,
         mode="train",
         augment=True,
-        fg_ratio=0.7,
     )
-    val_ds = BrainTumorDataset3D_V2(
+    val_ds = BrainTumorDataset3D(
         val_subjects, str(IMG_DIR), str(MSK_DIR),
         patch_size=PATCH_SIZE,
         patches_per_subject=PATCHES_PER_SUBJECT,
         mode="train",
         augment=False,
-        fg_ratio=0.5,
     )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -191,18 +187,15 @@ def main():
     train_loader = DataLoader(
         train_ds, batch_size=BATCH_SIZE, shuffle=True,
         num_workers=NUM_WORKERS, pin_memory=(device == "cuda"),
-        persistent_workers=(NUM_WORKERS > 0), prefetch_factor=4,
+        persistent_workers=(NUM_WORKERS > 0),
     )
     val_loader = DataLoader(
         val_ds, batch_size=BATCH_SIZE, shuffle=False,
         num_workers=NUM_WORKERS, pin_memory=(device == "cuda"),
-        persistent_workers=(NUM_WORKERS > 0), prefetch_factor=4,
+        persistent_workers=(NUM_WORKERS > 0),
     )
 
-    model = UNet3D_V2(in_channels=2, out_channels=1, deep_supervision=True).to(device)
-    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Parameters: {n_params:,}")
-
+    model = UNet3D(in_channels=2, out_channels=1).to(device)
     optimizer = Adam(model.parameters(), lr=LR)
     scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
     scaler = GradScaler(device=amp_device, enabled=(device == "cuda"))
@@ -227,13 +220,8 @@ def main():
 
             optimizer.zero_grad(set_to_none=True)
             with autocast(device_type=amp_device, enabled=(device == "cuda")):
-                outputs = model(x)
-                if isinstance(outputs, list):
-                    loss = deep_supervision_loss(outputs, y)
-                    logits = outputs[0]
-                else:
-                    loss = combined_loss(outputs, y)
-                    logits = outputs
+                logits = model(x)
+                loss = combined_loss(logits, y)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
