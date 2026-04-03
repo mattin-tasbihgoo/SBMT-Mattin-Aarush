@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 import io
 import random
@@ -12,7 +13,9 @@ from PIL import Image, ImageDraw, ImageFont
 from torch.amp import autocast
 from tqdm import tqdm
 
-from dataset import FLAIR_CH, T1GD_CH, normalize_volume, resize_image, resize_mask
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from data.dataset import FLAIR_CH, T1GD_CH, normalize_volume, resize_image, resize_mask
 
 try:
     from scipy import ndimage as ndi
@@ -22,7 +25,7 @@ except Exception:
     HAVE_SCIPY = False
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 DATA_EXPERIMENT_NAME = "runtime_flair_t1gd_25d5"
 

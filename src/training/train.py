@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 import random
 import time
@@ -12,9 +13,11 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset import BrainTumorSliceDataset
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from data.dataset import BrainTumorSliceDataset
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # --------------------------------------------------
 # Experiment paths

@@ -32,7 +32,7 @@ from sklearn.metrics import (
     precision_score, recall_score, confusion_matrix,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "CICI Info"))
 from cici_config import COHORT, BIOMARKERS, REGIMENS, REGIMEN_WEIGHTS, ODDS_RATIOS
 

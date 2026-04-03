@@ -7,13 +7,15 @@ Overlays are split into three folders based on per-subject 3D Dice:
 
 Outputs
 -------
-  outputs/3d_unet_v1/visualizations/overlays/best/{subject_id}.png
-  outputs/3d_unet_v1/visualizations/overlays/worst/{subject_id}.png
-  outputs/3d_unet_v1/visualizations/overlays/random/{subject_id}.png
-  outputs/3d_unet_v1/visualizations/training_curves.png
-  outputs/3d_unet_v1/visualizations/dice_distribution.png
+  outputs/<EXPERIMENT_NAME>/visualizations/overlays/best/{subject_id}.png
+  outputs/<EXPERIMENT_NAME>/visualizations/overlays/worst/{subject_id}.png
+  outputs/<EXPERIMENT_NAME>/visualizations/overlays/random/{subject_id}.png
+  outputs/<EXPERIMENT_NAME>/visualizations/training_curves.png
+  outputs/<EXPERIMENT_NAME>/visualizations/dice_distribution.png
+  outputs/<EXPERIMENT_NAME>/visualizations/v1_vs_v2_comparison.png  (if both runs exist)
 """
 
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -25,13 +27,21 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from model_3d import UNet3D
-from sliding_window import sliding_window_inference
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from models.model_3d import UNet3D
+from evaluation.sliding_window import sliding_window_inference
+
+try:
+    from models.model_3d_v2 import UNet3D_V2
+except ImportError:
+    UNet3D_V2 = None
 
 # ── Config ────────────────────────────────────────────────────────────
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-EXPERIMENT_NAME = "3d_unet_v1"
+EXPERIMENT_NAME = "3d_unet_v2"
+MODEL_VERSION = "v2"        # "v1" or "v2"
 DATA_ROOT = PROJECT_ROOT / "data" / "processed_3d"
 IMG_DIR = DATA_ROOT / "images"
 MSK_DIR = DATA_ROOT / "masks"
@@ -67,6 +77,16 @@ FLAIR_CMAP = "gray"
 T1GD_CMAP = "gray"
 GT_COLOR = "#00E5FF"    # cyan
 PRED_COLOR = "#FF4081"  # pink-red
+
+
+# ── Model loader ──────────────────────────────────────────────────────
+
+def build_model(device):
+    if MODEL_VERSION == "v2":
+        if UNet3D_V2 is None:
+            raise ImportError("model_3d_v2.py not found.")
+        return UNet3D_V2(in_channels=2, out_channels=1, deep_supervision=True).to(device)
+    return UNet3D(in_channels=2, out_channels=1).to(device)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -227,7 +247,7 @@ def make_overlay_panels(model, device, val_subjects, eval_df):
     print(f"  {RANDOM_DIR}")
 
 
-def make_training_curves(log_csv):
+def make_training_curves(log_csv, label=""):
     df = pd.read_csv(log_csv)
     epochs = df["epoch"].values
 
@@ -257,7 +277,7 @@ def make_training_curves(log_csv):
     axes[1].plot(epochs, df["val_dice"], color="#00E5FF", linewidth=2, label="Val Dice (patch)")
     if "sw_val_dice" in df.columns:
         axes[1].plot(epochs, df["sw_val_dice"], color="#69FF47", linewidth=2.5,
-                     linestyle="--", label="SW Val Dice (3D, 10 subjects)")
+                     linestyle="--", label="SW Val Dice (3D, 5 subjects)")
     axes[1].set_xlabel("Epoch")
     axes[1].set_ylabel("Dice")
     axes[1].set_title("Dice Coefficient")
@@ -265,18 +285,22 @@ def make_training_curves(log_csv):
     axes[1].legend(frameon=False, labelcolor="white")
     axes[1].grid(True, color="#333333", linewidth=0.5)
 
-    best_epoch = int(df.loc[df["sw_val_dice"].idxmax(), "epoch"])
-    best_dice = float(df["sw_val_dice"].max())
-    axes[1].axvline(best_epoch, color="#FFD700", linewidth=1.2, linestyle=":")
-    axes[1].annotate(
-        f"Best\n{best_dice:.4f}\n(ep {best_epoch})",
-        xy=(best_epoch, best_dice),
-        xytext=(best_epoch + 2, best_dice - 0.04),
-        color="#FFD700", fontsize=9,
-        arrowprops=dict(arrowstyle="->", color="#FFD700", lw=1.2),
-    )
+    if "sw_val_dice" in df.columns and df["sw_val_dice"].notna().any():
+        best_epoch = int(df.loc[df["sw_val_dice"].idxmax(), "epoch"])
+        best_dice = float(df["sw_val_dice"].max())
+        axes[1].axvline(best_epoch, color="#FFD700", linewidth=1.2, linestyle=":")
+        axes[1].annotate(
+            f"Best\n{best_dice:.4f}\n(ep {best_epoch})",
+            xy=(best_epoch, best_dice),
+            xytext=(best_epoch + 2, best_dice - 0.04),
+            color="#FFD700", fontsize=9,
+            arrowprops=dict(arrowstyle="->", color="#FFD700", lw=1.2),
+        )
 
-    fig.suptitle("3D U-Net Training — MSD Task01 BrainTumour", color="white", fontsize=14)
+    title = f"3D U-Net Training — MSD Task01 BrainTumour"
+    if label:
+        title += f"  [{label}]"
+    fig.suptitle(title, color="white", fontsize=14)
     plt.tight_layout()
     out = VIZ_DIR / "training_curves.png"
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
@@ -328,13 +352,80 @@ def make_dice_distribution(eval_csv):
     print(f"Saved Dice distribution to: {out}")
 
 
+def make_v1_v2_comparison():
+    """Side-by-side SW val Dice curves and per-subject Dice distributions for v1 and v2."""
+    v1_log = PROJECT_ROOT / "outputs" / "3d_unet_v1" / "logs" / "training_log.csv"
+    v2_log = PROJECT_ROOT / "outputs" / "3d_unet_v2" / "logs" / "training_log.csv"
+    v1_eval = PROJECT_ROOT / "outputs" / "3d_unet_v1" / "evaluation" / "subject_metrics_3d.csv"
+    v2_eval = PROJECT_ROOT / "outputs" / "3d_unet_v2" / "evaluation" / "subject_metrics_3d.csv"
+
+    have_logs = v1_log.exists() and v2_log.exists()
+    have_evals = v1_eval.exists() and v2_eval.exists()
+
+    if not (have_logs or have_evals):
+        print("  Skipping comparison — need both v1 and v2 results.")
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.patch.set_facecolor("#111111")
+    for ax in axes:
+        ax.set_facecolor("#1a1a1a")
+        ax.tick_params(colors="white")
+        ax.xaxis.label.set_color("white")
+        ax.yaxis.label.set_color("white")
+        ax.title.set_color("white")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#444444")
+
+    # Left: SW val Dice training curves
+    if have_logs:
+        df1 = pd.read_csv(v1_log)
+        df2 = pd.read_csv(v2_log)
+        axes[0].plot(df1["epoch"], df1["sw_val_dice"], color="#00E5FF",
+                     linewidth=2, label="V1 [32,64,128,256]")
+        axes[0].plot(df2["epoch"], df2["sw_val_dice"], color="#FF4081",
+                     linewidth=2, label="V2 [64,128,256,320] + DS + 70/30")
+        axes[0].set_xlabel("Epoch")
+        axes[0].set_ylabel("SW Val Dice (3D)")
+        axes[0].set_title("SW Val Dice — V1 vs V2")
+        axes[0].set_ylim(0.5, 1.0)
+        axes[0].legend(frameon=False, labelcolor="white")
+        axes[0].grid(True, color="#333333", linewidth=0.5)
+
+    # Right: per-subject Dice distributions
+    if have_evals:
+        e1 = pd.read_csv(v1_eval)["dice_3d"].values
+        e2 = pd.read_csv(v2_eval)["dice_3d"].values
+        bins = np.linspace(0.4, 1.0, 25)
+        axes[1].hist(e1, bins=bins, alpha=0.6, color="#00E5FF",
+                     label=f"V1  mean={e1.mean():.3f}  med={np.median(e1):.3f}")
+        axes[1].hist(e2, bins=bins, alpha=0.6, color="#FF4081",
+                     label=f"V2  mean={e2.mean():.3f}  med={np.median(e2):.3f}")
+        axes[1].axvline(e1.mean(), color="#00E5FF", linewidth=1.5, linestyle="--")
+        axes[1].axvline(e2.mean(), color="#FF4081", linewidth=1.5, linestyle="--")
+        axes[1].set_xlabel("3D Dice @ threshold 0.5")
+        axes[1].set_ylabel("Subject count")
+        axes[1].set_title("Per-Subject Dice Distribution — V1 vs V2")
+        axes[1].legend(frameon=False, labelcolor="white")
+        axes[1].grid(True, color="#333333", linewidth=0.5)
+
+    fig.suptitle("3D U-Net V1 vs V2 — MSD Task01 BrainTumour", color="white", fontsize=14)
+    plt.tight_layout()
+    out = VIZ_DIR / "v1_vs_v2_comparison.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print(f"Saved V1 vs V2 comparison to: {out}")
+
+
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device: {device}")
+    print(f"Device: {device}  |  Experiment: {EXPERIMENT_NAME}  |  Model: {MODEL_VERSION}")
     print(f"Loading checkpoint: {CKPT_PATH}")
 
-    model = UNet3D(in_channels=2, out_channels=1).to(device)
-    model.load_state_dict(torch.load(str(CKPT_PATH), map_location=device))
+    model = build_model(device)
+    model.load_state_dict(
+        torch.load(str(CKPT_PATH), map_location=device, weights_only=True)
+    )
     model.eval()
 
     val_subjects = [
@@ -346,14 +437,17 @@ def main():
 
     eval_df = pd.read_csv(EVAL_CSV) if EVAL_CSV.exists() else None
 
-    print("\n[1/3] Training curves")
-    make_training_curves(LOG_CSV)
+    print("\n[1/4] Training curves")
+    make_training_curves(LOG_CSV, label=f"{EXPERIMENT_NAME} ({MODEL_VERSION})")
 
-    print("\n[2/3] Dice distribution")
+    print("\n[2/4] Dice distribution")
     make_dice_distribution(EVAL_CSV)
 
-    print("\n[3/3] Overlay panels")
+    print("\n[3/4] Overlay panels")
     make_overlay_panels(model, device, val_subjects, eval_df)
+
+    print("\n[4/4] V1 vs V2 comparison")
+    make_v1_v2_comparison()
 
     print(f"\nAll figures saved under: {VIZ_DIR}")
 

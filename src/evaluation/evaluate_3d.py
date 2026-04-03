@@ -17,17 +17,17 @@ import torch
 from scipy.ndimage import label as cc_label
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "3D"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from model_3d import UNet3D
-from sliding_window import sliding_window_inference
+from models.model_3d import UNet3D
+from evaluation.sliding_window import sliding_window_inference
 
 try:
-    from model_3d_v2 import UNet3D_V2
+    from models.model_3d_v2 import UNet3D_V2
 except ImportError:
     UNet3D_V2 = None
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # ── Experiment ────────────────────────────────────────────────────────
 EXPERIMENT_NAME = "3d_unet_ensemble_v1v2"

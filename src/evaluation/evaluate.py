@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 import random
 
@@ -11,7 +12,9 @@ from torch.amp import autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset import BrainTumorSliceDataset
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from data.dataset import BrainTumorSliceDataset
 
 try:
     from scipy import ndimage as ndi
@@ -21,7 +24,7 @@ except Exception:
     HAVE_SCIPY = False
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # --------------------------------------------------
 # Match the CURRENT successful training run
