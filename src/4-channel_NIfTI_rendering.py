@@ -1,7 +1,7 @@
 import nibabel as nib
 import napari
 
-img = nib.load("data/raw/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz")
+img = nib.load("data/raw/Task01_BrainTumour/imagesTr/BRATS_381.nii.gz")
 arr = img.get_fdata()          # shape: (240, 240, 155, 4)  — full float64, no truncation
 
 modalities = ["T1", "T1ce", "T2", "FLAIR"]
