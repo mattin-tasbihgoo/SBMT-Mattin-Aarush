@@ -48,8 +48,8 @@ REFERENCE_VAL_SUBJECTS_TXT = REFERENCE_SPLIT_LOG_DIR / "val_subjects.txt"
 # ── Hyperparameters ──────────────────────────────────────────────────
 PATCH_SIZE = (128, 128, 128)
 PATCHES_PER_SUBJECT = 4
-BATCH_SIZE = 2
-NUM_WORKERS = 2
+BATCH_SIZE = 4
+NUM_WORKERS = 8
 EPOCHS = 50
 LR = 1e-4
 VAL_FRAC = 0.20
@@ -68,7 +68,7 @@ SW_THRESHOLD = 0.5
 
 # How many subjects to run sliding-window eval on each epoch
 # (full eval is expensive; set to 0 to skip per-epoch SW eval)
-VAL_SW_SUBJECTS = 10
+VAL_SW_SUBJECTS = 5
 
 # ─────────────────────────────────────────────────────────────────────
 
