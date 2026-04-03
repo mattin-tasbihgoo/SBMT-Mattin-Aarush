@@ -1,23 +1,38 @@
 """Evaluate a trained 3D U-Net on validation subjects.
 
-Loads each subject's full volume, runs sliding-window inference,
-computes per-subject 3D Dice, and writes summary CSVs.
+Supports:
+  - Test-time augmentation (TTA): flip along 3 axes, average 4 probability maps
+  - Connected component post-processing: keep only the largest predicted region
+  - Checkpoint ensemble: average predictions from multiple checkpoints
+  - Model version selection: v1 (original) or v2 (larger + deep supervision)
 """
 
+import sys
 from pathlib import Path
 import random
 
 import numpy as np
 import pandas as pd
 import torch
+from scipy.ndimage import label as cc_label
 from tqdm import tqdm
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "3D"))
 
 from model_3d import UNet3D
 from sliding_window import sliding_window_inference
 
+try:
+    from model_3d_v2 import UNet3D_V2
+except ImportError:
+    UNet3D_V2 = None
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-EXPERIMENT_NAME = "3d_unet_v1"
+# ── Experiment ────────────────────────────────────────────────────────
+EXPERIMENT_NAME = "3d_unet_ensemble_v1v2"
+MODEL_VERSION = "ensemble"          # "v1", "v2", or "ensemble"
+
 DATA_ROOT = PROJECT_ROOT / "data" / "processed_3d"
 IMG_DIR = DATA_ROOT / "images"
 MSK_DIR = DATA_ROOT / "masks"
@@ -33,12 +48,21 @@ REFERENCE_SPLIT_RUN_NAME = "runtime_flair_t1gd_25d5_smalllesion_baseline_v1"
 REFERENCE_SPLIT_LOG_DIR = PROJECT_ROOT / "outputs" / REFERENCE_SPLIT_RUN_NAME / "logs"
 REFERENCE_VAL_SUBJECTS_TXT = REFERENCE_SPLIT_LOG_DIR / "val_subjects.txt"
 
+# ── Inference settings ────────────────────────────────────────────────
 PATCH_SIZE = (128, 128, 128)
 OVERLAP = 0.5
 THRESHOLDS = [0.30, 0.40, 0.50, 0.60, 0.70]
 BASE_THRESHOLD = 0.50
 RANDOM_SEED = 42
 VAL_FRAC = 0.20
+
+# ── Phase 1 enhancements ─────────────────────────────────────────────
+USE_TTA = False             # TTA doubles inference time; ensemble already covers variance
+USE_CC_POSTPROC = True      # keep only largest connected component
+ENSEMBLE_CHECKPOINTS = [
+    PROJECT_ROOT / "outputs" / "3d_unet_v1" / "checkpoints" / "best_model_3d_unet_v1.pt",
+    PROJECT_ROOT / "outputs" / "3d_unet_v2" / "checkpoints" / "best_model_3d_unet_v2.pt",
+]
 
 
 def set_seed(seed: int):
@@ -88,6 +112,55 @@ def resolve_checkpoint() -> Path:
     raise FileNotFoundError(f"No checkpoint found in {CKPT_DIR}")
 
 
+# ── Phase 1 helpers ──────────────────────────────────────────────────
+
+def predict_with_tta(model, image, patch_size, overlap, device, amp_enabled):
+    """Average predictions over original + 3 single-axis flips."""
+    prob = sliding_window_inference(model, image, patch_size, overlap, device, amp_enabled)
+
+    for axis_img, axis_prob in [(1, 0), (2, 1), (3, 2)]:
+        flipped_img = np.flip(image, axis=axis_img).copy()
+        flipped_prob = sliding_window_inference(
+            model, flipped_img, patch_size, overlap, device, amp_enabled
+        )
+        prob = prob + np.flip(flipped_prob, axis=axis_prob).copy()
+
+    return prob / 4.0
+
+
+def largest_connected_component(binary_mask):
+    """Keep only the largest connected component in a binary volume."""
+    labeled, n = cc_label(binary_mask)
+    if n <= 1:
+        return binary_mask
+    sizes = np.bincount(labeled.ravel())
+    sizes[0] = 0
+    return (labeled == sizes.argmax()).astype(np.uint8)
+
+
+def build_model(device, checkpoint_path=None):
+    """Build a model appropriate for the given checkpoint path, or MODEL_VERSION."""
+    cp = Path(checkpoint_path) if checkpoint_path else None
+    # Detect V2 by checkpoint filename or explicit MODEL_VERSION
+    is_v2 = (MODEL_VERSION == "v2") or (
+        cp is not None and "v2" in cp.name
+    )
+    if is_v2:
+        if UNet3D_V2 is None:
+            raise ImportError("model_3d_v2.py not found — create it first.")
+        return UNet3D_V2(in_channels=2, out_channels=1, deep_supervision=True).to(device)
+    return UNet3D(in_channels=2, out_channels=1).to(device)
+
+
+def infer_subject(model, image, patch_size, overlap, device, amp_enabled):
+    """Run inference on a single subject, with or without TTA."""
+    if USE_TTA:
+        return predict_with_tta(model, image, patch_size, overlap, device, amp_enabled)
+    return sliding_window_inference(model, image, patch_size, overlap, device, amp_enabled)
+
+
+# ── Main ──────────────────────────────────────────────────────────────
+
 def main():
     set_seed(RANDOM_SEED)
 
@@ -95,41 +168,57 @@ def main():
     all_subjects = sorted(df["subject_id"].unique().tolist())
     val_subjects, split_source = resolve_val_subjects(all_subjects)
 
-    ckpt_path = resolve_checkpoint()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    amp_device = device
+    amp_enabled = device == "cuda"
 
-    print("Experiment:", EXPERIMENT_NAME)
-    print("Checkpoint:", ckpt_path)
-    print("Val subjects:", len(val_subjects))
-    print("Split source:", split_source)
-    print("Device:", device)
+    if ENSEMBLE_CHECKPOINTS:
+        ckpt_paths = [Path(p) for p in ENSEMBLE_CHECKPOINTS]
+        models = []
+        for cp in ckpt_paths:
+            m = build_model(device, checkpoint_path=cp)
+            m.load_state_dict(torch.load(cp, map_location=device, weights_only=True))
+            m.eval()
+            models.append(m)
+        print(f"Ensemble: {len(models)} checkpoints")
+    else:
+        ckpt_path = resolve_checkpoint()
+        model = build_model(device, checkpoint_path=ckpt_path)
+        model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True))
+        model.eval()
+        models = [model]
+        print(f"Checkpoint: {ckpt_path}")
 
-    model = UNet3D(in_channels=2, out_channels=1).to(device)
-    state = torch.load(ckpt_path, map_location=device)
-    model.load_state_dict(state)
-    model.eval()
+    enhancements = []
+    if USE_TTA:
+        enhancements.append("TTA")
+    if USE_CC_POSTPROC:
+        enhancements.append("CC")
+    if ENSEMBLE_CHECKPOINTS:
+        enhancements.append(f"Ensemble({len(models)})")
+
+    print(f"Experiment: {EXPERIMENT_NAME}  |  Model: {MODEL_VERSION}")
+    print(f"Val subjects: {len(val_subjects)}  |  Split: {split_source}")
+    print(f"Device: {device}")
+    print(f"Enhancements: {' + '.join(enhancements) if enhancements else 'none'}")
 
     thresholds = sorted(set(float(t) for t in THRESHOLDS + [BASE_THRESHOLD]))
     threshold_results = {thr: [] for thr in thresholds}
-
     subject_rows = []
 
     for sid in tqdm(val_subjects, desc="Evaluating 3D"):
-        image = np.load(str(IMG_DIR / f"{sid}.npy"))  # (2,H,W,D)
-        mask = np.load(str(MSK_DIR / f"{sid}.npy"))    # (H,W,D)
+        image = np.load(str(IMG_DIR / f"{sid}.npy"))
+        mask = np.load(str(MSK_DIR / f"{sid}.npy"))
 
-        pred_prob = sliding_window_inference(
-            model, image,
-            patch_size=PATCH_SIZE,
-            overlap=OVERLAP,
-            device=device,
-            amp_enabled=(device == "cuda"),
-        )
+        prob_acc = np.zeros_like(mask, dtype=np.float32)
+        for m in models:
+            prob_acc += infer_subject(m, image, PATCH_SIZE, OVERLAP, device, amp_enabled)
+        pred_prob = prob_acc / len(models)
 
         base_dice = None
         for thr in thresholds:
             pred_bin = (pred_prob >= thr).astype(np.uint8)
+            if USE_CC_POSTPROC:
+                pred_bin = largest_connected_component(pred_bin)
             d = dice_3d(pred_bin, mask)
             threshold_results[thr].append(d)
             if abs(thr - BASE_THRESHOLD) < 1e-12:
@@ -160,6 +249,8 @@ def main():
     print(f"\n3D Dice @ threshold {BASE_THRESHOLD}:")
     print(f"  Mean:   {base_arr.mean():.4f} +/- {base_arr.std():.4f}")
     print(f"  Median: {np.median(base_arr):.4f}")
+    if enhancements:
+        print(f"  Enhancements: {' + '.join(enhancements)}")
     print(f"\nThreshold sweep:")
     print(thr_df.to_string(index=False))
     print(f"\nSaved to: {EVAL_DIR}")
