@@ -168,11 +168,15 @@ def parse_args():
                    help="New directory for results; must not already contain results.")
     p.add_argument("--checkpoint", type=Path, default=None,
                    help="Override the checkpoint for --model v1 or v2 (e.g. a latest_ checkpoint).")
+    p.add_argument("--tta", action="store_true",
+                   help="Flip TTA (original + 3 single-axis flips). Off by default, as in the April ensemble run.")
     return p.parse_args()
 
 
 def main():
+    global USE_TTA
     args = parse_args()
+    USE_TTA = args.tta
     if args.checkpoint is not None and args.model == "ensemble":
         raise SystemExit("--checkpoint applies to a single model, not the ensemble")
 
