@@ -1,0 +1,40 @@
+{
+  "date": "2026-11-15T15:41:01",
+  "git_commit": "8d44f85d3c37dca6cf33be3209511fa0b1fb17b6",
+  "model": "v1",
+  "checkpoints": [
+    {
+      "version": "v1",
+      "path": "outputs\\3d_unet_v1\\checkpoints\\best_model_3d_unet_v1.pt",
+      "sha256": "22df05f92c8e3892fa1d9b5cc8438f29712e2c6740dd7169e46ec8573ffcbac4"
+    }
+  ],
+  "val_subjects_file": "outputs\\runtime_flair_t1gd_25d5_smalllesion_baseline_v1\\logs\\val_subjects.txt",
+  "n_subjects": 96,
+  "patch_size": [
+    128,
+    128,
+    128
+  ],
+  "overlap": 0.5,
+  "blend": "uniform count-map average",
+  "thresholds": [
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7
+  ],
+  "base_threshold": 0.5,
+  "tta": false,
+  "largest_cc": true,
+  "amp": true,
+  "device": "NVIDIA GeForce RTX 3090",
+  "versions": {
+    "python": "3.12.9",
+    "torch": "2.5.1+cu121",
+    "cuda": "12.1",
+    "cudnn": 90100,
+    "numpy": "2.4.6"
+  }
+}
