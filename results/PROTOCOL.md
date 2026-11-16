@@ -119,7 +119,7 @@ E0 recipe (identical to `src/training/train_3d.py` V1 except as noted):
   - final-epoch checkpoint (April V1 was stopped after 45 of its 50 scheduled epochs and
     picked by Dice on 5 validation subjects);
   - no per-epoch validation;
-  - 20 data-loader workers instead of 8 (speed only).
+  - 14 data-loader workers instead of 8 (speed only; GPU-bound at 0.41 s/iteration, measured).
 - E0 inference: sliding window 128³, 50% overlap, count-map averaging, AMP, no TTA,
   threshold 0.5, largest connected component (the April ensemble's settings). Results without
   largest-CC are also stored.
