@@ -1,0 +1,6 @@
+fold,variant,threshold,post,selection_mean_dice_other_folds,baseline_mean_dice_other_folds,runner_up,runner_up_dice
+0,I2,0.500000,rel10,0.903696,0.898027,I2 0.5 min5000,0.903213
+1,I2,0.500000,rel10,0.901002,0.894688,I4 0.5 min5000,0.900717
+2,I2,0.500000,rel10,0.905898,0.900748,I2 0.5 min5000,0.905649
+3,I2,0.500000,rel10,0.903154,0.894702,I2 0.5 min1000,0.902741
+4,I2,0.500000,rel10,0.904390,0.897941,I3 0.5 min5000,0.904226

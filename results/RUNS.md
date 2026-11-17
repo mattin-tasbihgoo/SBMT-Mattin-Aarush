@@ -45,3 +45,7 @@ Inference-only options on the 5 E0 fold models; each subject is predicted only b
 - 6 × 4 × 7 = 168 configurations. Fold-ensembling is excluded (cannot be scored honestly on these 484).
 - Ship rule vs E0 (I0, 0.5, largest CC): paired bootstrap 95 % CI of the mean Dice difference > 0 (10,000 resamples, seed 20261115) and bottom-decile mean not lower than 0.7242.
 - Disclosure: E0's pooled OOF table (no-CC 0.9015 vs CC 0.8972) was seen before this list was written, which is why component-size rules are on it. Cross-fitting keeps each fold's choice blind to that fold.
+
+| Date | Commit | Run | Config | Folds | Result | Verdict |
+|---|---|---|---|---|---|---|
+| 2026-11-16 | fc0ad91 | D1 `outputs/d1_inference_2026-11-16` | 168 pre-registered inference × threshold × post-processing configs on the E0 fold models; cross-fitted choice | 5-fold, all 484 OOF | every fold chose I2 (flip TTA, count avg) + thr 0.5 + keep components ≥ 10 % of largest; mean **0.9036** (CI 0.8979–0.9091), median 0.9218, SD 0.0628, min 0.546, ≥0.80 92.1 %, ≥0.90 68.4 %; paired diff vs E0 +0.0064 (CI +0.0037 to +0.0095); bottom decile 0.7542 | **Ships.** New baseline = E0 + D1 inference. See `results/D1.md` |
