@@ -1,4 +1,4 @@
-"""Run the whole E0 CV baseline: train + score folds 0..4 in turn, then aggregate.
+"""Run a whole CV recipe (E0 baseline or a step-E variant): train + score folds 0..4 in turn, then aggregate.
 
 Resumable: finished folds are skipped, an interrupted fold resumes from its
 last epoch. Keeps Windows awake while running (process-scoped; no system
@@ -32,13 +32,13 @@ def run(cmd, fatal=True):
     return rc
 
 
-def train_fold(k, run_dir, workers):
+def train_fold(k, run_dir, workers, recipe):
     # A crash (e.g. Windows commit limit hit by data workers) resumes from the last
     # finished epoch with fewer workers; the recipe is unchanged.
     for attempt in range(4):
         w = max(4, workers - 4 * attempt)
         rc = run([SRC / "training" / "train_cv.py", "--fold", k, "--run-dir", run_dir,
-                  "--workers", w], fatal=False)
+                  "--workers", w, "--recipe", recipe], fatal=False)
         if rc == 0:
             return
         stamp(f"fold {k}: retry {attempt + 1} with fewer workers")
@@ -50,14 +50,20 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", required=True)
     p.add_argument("--tag", required=True)
-    p.add_argument("--workers", type=int, default=20)
+    p.add_argument("--workers", type=int, default=14)
+    p.add_argument("--recipe", default="E0")
     args = p.parse_args()
     if sys.platform == "win32":  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED: no sleep while this process lives
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
     for k in range(5):
-        train_fold(k, args.run_dir, args.workers)
-        run([SRC / "evaluation" / "evaluate_cv.py", "--fold", k, "--run-dir", args.run_dir])
-    run([SRC / "evaluation" / "cv_report.py", "--run-dir", args.run_dir, "--tag", args.tag])
+        train_fold(k, args.run_dir, args.workers, args.recipe)
+        if args.recipe == "E0":
+            run([SRC / "evaluation" / "evaluate_cv.py", "--fold", k, "--run-dir", args.run_dir])
+        else:  # step-E variants: D1's frozen inference config
+            run([SRC / "evaluation" / "score_fold_e.py", "--fold", k, "--run-dir", args.run_dir,
+                 "--recipe", args.recipe])
+    report = "cv_report.py" if args.recipe == "E0" else "compare_cv.py"
+    run([SRC / "evaluation" / report, "--run-dir", args.run_dir, "--tag", args.tag])
     stamp("ALL DONE")
 
 
