@@ -1,0 +1,37 @@
+{
+  "fold": 1,
+  "recipe": {
+    "name": "E0_v1_recipe",
+    "model": "UNet3D features [32,64,128,256]",
+    "in_channels": 2,
+    "channels": "FLAIR, T1gd (processed_3d channels 0,1)",
+    "patch_size": [
+      128,
+      128,
+      128
+    ],
+    "patches_per_subject": 4,
+    "foreground_bias": 0.5,
+    "augmentation": "random flips on 3 axes",
+    "batch_size": 4,
+    "epochs": 50,
+    "lr": 0.0001,
+    "optimizer": "Adam",
+    "scheduler": "CosineAnnealingLR T_max=50 eta_min=1e-6",
+    "loss": "0.5 BCE + 0.5 soft Dice",
+    "grad_clip": 1.0,
+    "amp": true,
+    "seed": 42,
+    "checkpoint_rule": "final epoch (no selection)"
+  },
+  "n_train": 387,
+  "n_test": 97,
+  "folds_csv": "results\\protocol\\folds_5fold_seed20261115.csv",
+  "folds_sha256": "eaf1cf46c2ca972a15701a05d41910ba4703f66c9c1c3df45d66cb7b46165714",
+  "git_commit": "4f083742bda863046787f546a268433f4151be6e",
+  "torch": "2.5.1+cu121",
+  "cuda": "12.1",
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "workers": 14,
+  "started": "2026-11-16T00:49:48"
+}

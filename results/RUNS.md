@@ -28,3 +28,9 @@ One row per run, kept or not. "Set" names the subjects scored. **val96** is the 
 | Date | Commit | Run | Config | Set | Result | Verdict |
 |---|---|---|---|---|---|---|
 | 2026-11-15 | analysis/error-b | `outputs/error_analysis_2026-11-15/probs/{v1,v2}` | V1 + V2 best, no TTA; probabilities saved (float32) | val96 | Dice reproduces the audit exactly (all 3 models × CC / no CC × 96) | Analysis only. Ensemble + CC: sDice@2mm median 0.909, HD95 median 3.5 mm. See `results/ERROR_ANALYSIS.md` |
+
+## 5-fold CV (step C protocol, `results/PROTOCOL.md`)
+
+| Date | Commit | Run | Config | Folds | Result | Verdict |
+|---|---|---|---|---|---|---|
+| 2026-11-15 22:44 → 2026-11-16 08:58 (a 22:27 attempt crashed in epoch 1, Windows commit limit) | 4f08374 | E0 `outputs/cv_e0_v1recipe_2026-11-15` | April V1 recipe, 50 epochs, final-epoch checkpoint; inference SW 0.5 overlap, no TTA, thr 0.5, largest CC | 5-fold, all 484 OOF | mean **0.8972** (CI 0.8908–0.9035), median 0.9205, SD 0.0717, min 0.521, ≥0.80 89.5 %, ≥0.90 66.1 %; bottom decile 0.7242; April-96 subset 0.8935 | **Baseline** for D/E. See `results/CV_E0.md`. No-CC stored (0.9015) but not a frozen config; goes to D1 cross-fitting |

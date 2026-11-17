@@ -1,0 +1,10 @@
+{
+  "fold": 3,
+  "checkpoint": "outputs\\cv_e0_v1recipe_2026-11-15\\fold3\\final_model.pt",
+  "checkpoint_sha256": "2ef4f7a7e1a78340256b060750dc4318803b6ba321f8d21709f7189d7dff712c",
+  "inference": "sliding window 128^3, overlap 0.5, count-map averaging, AMP, no TTA",
+  "threshold": 0.5,
+  "post": "largest connected component (dice_cc); none (dice_nocc)",
+  "git_commit": "4f083742bda863046787f546a268433f4151be6e",
+  "date": "2026-11-16T06:55:15"
+}
