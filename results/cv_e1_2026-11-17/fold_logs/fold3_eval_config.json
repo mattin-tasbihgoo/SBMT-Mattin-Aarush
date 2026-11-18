@@ -1,0 +1,9 @@
+{
+  "fold": 3,
+  "recipe": "E1",
+  "checkpoint_sha256": "126c0c8f053072fe91c988b16ceaebaf1b2f3ce2edbc32b7225b6774e86df56c",
+  "inference": "I2: flip TTA (orig + 3 single-axis flips), count averaging, 50% overlap, AMP, batch-6 patches",
+  "frozen_config": "I2, threshold 0.5, keep components >= 10% of largest (D1)",
+  "git_commit": "a4b6221a1fe1396dd845ddf6ce51256722ebcfc7",
+  "date": "2026-11-17T21:24:40"
+}

@@ -1,0 +1,2 @@
+mean,baseline_mean,mean_diff,ci_lo,ci_hi,bottom_decile,baseline_bottom_decile,n_better_0.005,n_worse_0.005,ships
+0.9092,0.9036,0.0056,0.0036,0.0075,0.7621,0.7542,219,74,True
