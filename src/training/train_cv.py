@@ -156,7 +156,8 @@ def main():
         model.load_state_dict(st["model"]); optimizer.load_state_dict(st["optimizer"])
         scheduler.load_state_dict(st["scheduler"]); scaler.load_state_dict(st["scaler"])
         history, start_epoch = st["history"], st["epoch"]
-        torch.set_rng_state(st["torch_rng"]); np.random.set_state(st["np_rng"])
+        # map_location moved the saved CPU RNG state to the GPU; set_rng_state needs a CPU ByteTensor
+        torch.set_rng_state(st["torch_rng"].cpu()); np.random.set_state(st["np_rng"])
         print(f"Resuming fold {args.fold} after epoch {start_epoch}")
         with open(fold_dir / "resumed.txt", "a") as f:
             f.write(f"{datetime.now().isoformat(timespec='seconds')} resumed after epoch {start_epoch}\n")
