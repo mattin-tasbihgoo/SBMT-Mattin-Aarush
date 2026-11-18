@@ -49,3 +49,15 @@ Inference-only options on the 5 E0 fold models; each subject is predicted only b
 | Date | Commit | Run | Config | Folds | Result | Verdict |
 |---|---|---|---|---|---|---|
 | 2026-11-16 | fc0ad91 | D1 `outputs/d1_inference_2026-11-16` | 168 pre-registered inference × threshold × post-processing configs on the E0 fold models; cross-fitted choice | 5-fold, all 484 OOF | every fold chose I2 (flip TTA, count avg) + thr 0.5 + keep components ≥ 10 % of largest; mean **0.9036** (CI 0.8979–0.9091), median 0.9218, SD 0.0628, min 0.546, ≥0.80 92.1 %, ≥0.90 68.4 %; paired diff vs E0 +0.0064 (CI +0.0037 to +0.0095); bottom decile 0.7542 | **Ships.** New baseline = E0 + D1 inference. See `results/D1.md` |
+
+### E1 pre-registration (written 2026-11-17, before training)
+
+- **Hypothesis (from step B and E0):** edema is the main miss (13 % of edema voxels missed vs 3 % of enhancing); T2w shows edema directly and T1w gives anatomy. Adding them should reduce edema misses.
+- **Change:** E0 recipe with 4 input channels (FLAIR, T1gd, T1w, T2w; `data/processed_3d_4ch`, same per-channel normalization, float16 storage — bit-identical to what the AMP conv sees; channels 0–1 verified identical to E0's inputs). Nothing else changes: same folds, model widths, patches, schedule, seed, final-epoch checkpoint.
+- **Inference fixed in advance** = D1 choice: flip TTA, count averaging, 50 % overlap, threshold 0.5, keep components ≥ 10 % of largest. No re-tuning on E1's OOF.
+- **Ship rule vs E0 + D1** (per-case, n = 484): paired bootstrap 95 % CI of mean Dice difference > 0 and bottom-decile mean ≥ 0.7542.
+- **Secondary (descriptive):** missed-voxel share per subregion vs baseline; E1 under the E0 inference config vs E0.
+
+| Date | Commit | Run | Config | Folds | Result | Verdict |
+|---|---|---|---|---|---|---|
+| 2026-11-17 10:51 → 23:40 (fold 3 paused by hand after epoch 20, 17:57–20:05; the first resume crashed on a resume bug, fixed in a4b6221; fold 3 resumed from epoch 21) | defc881 / 31da66c (training folds 0–3), a4b6221 (fold 4 training, scoring folds 3–4) | E1 `outputs/cv_e1_4ch_2026-11-17` | E0 recipe with 4 input channels (FLAIR, T1gd, T1w, T2w); frozen D1 inference (flip TTA, count avg, 50 % overlap, thr 0.5, keep components ≥ 10 % of largest) | 5-fold, all 484 OOF | mean **0.9092** (CI 0.9035–0.9146), median 0.9280, SD 0.0619, min 0.525, ≥0.80 93.2 %, ≥0.90 71.1 %; paired diff vs E0 + D1 +0.0056 (CI +0.0036 to +0.0075); bottom decile 0.7621; 219 better / 74 worse by > 0.005; every fold improves (+0.0027 to +0.0076). Edema missed-voxel share 11.9 % → 10.6 %. Under E0 inference: 0.9022 vs E0 0.8972 (+0.0050, CI +0.0028 to +0.0070) | **Ships.** New baseline = E1 + D1 inference (bottom decile 0.7621). See `results/CV_E1.md` |

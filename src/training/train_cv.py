@@ -63,6 +63,15 @@ RECIPE = {
     "amp": True,
     "seed": 42,
     "checkpoint_rule": "final epoch (no selection)",
+    "image_dir": "data/processed_3d/images",
+}
+
+RECIPES = {
+    "E0": RECIPE,
+    # E1 (pre-registered in results/RUNS.md): E0 + T1w and T2w inputs; nothing else changes.
+    "E1": {**RECIPE, "name": "E1_four_channels", "in_channels": 4,
+           "channels": "FLAIR, T1gd, T1w, T2w (processed_3d_4ch, float16; same normalization)",
+           "image_dir": "data/processed_3d_4ch/images"},
 }
 
 
@@ -70,6 +79,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--fold", type=int, required=True, choices=range(5))
     p.add_argument("--run-dir", type=Path, required=True)
+    p.add_argument("--recipe", default="E0", choices=sorted(RECIPES))
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--bench", type=int, default=0, help="time N iterations and exit; writes nothing")
     return p.parse_args()
@@ -94,7 +104,9 @@ def main():
         print(f"{final_ckpt} exists; fold {args.fold} already trained. Nothing to do.")
         return
 
-    set_seed(RECIPE["seed"])
+    recipe = RECIPES[args.recipe]
+    img_dir = PROJECT_ROOT / recipe["image_dir"]
+    set_seed(recipe["seed"])
     train_subjects, test_subjects = fold_subjects(args.fold)
     device = "cuda"
     torch.backends.cudnn.benchmark = True
@@ -103,18 +115,18 @@ def main():
     torch.set_float32_matmul_precision("high")
 
     train_ds = BrainTumorDataset3D(
-        train_subjects, str(IMG_DIR), str(MSK_DIR),
-        patch_size=tuple(RECIPE["patch_size"]),
-        patches_per_subject=RECIPE["patches_per_subject"],
+        train_subjects, str(img_dir), str(MSK_DIR),
+        patch_size=tuple(recipe["patch_size"]),
+        patches_per_subject=recipe["patches_per_subject"],
         mode="train", augment=True,
     )
-    loader = DataLoader(train_ds, batch_size=RECIPE["batch_size"], shuffle=True,
+    loader = DataLoader(train_ds, batch_size=recipe["batch_size"], shuffle=True,
                         num_workers=args.workers, pin_memory=True,
                         persistent_workers=args.workers > 0)
 
-    model = UNet3D(in_channels=2, out_channels=1).to(device)
-    optimizer = Adam(model.parameters(), lr=RECIPE["lr"])
-    scheduler = CosineAnnealingLR(optimizer, T_max=RECIPE["epochs"], eta_min=1e-6)
+    model = UNet3D(in_channels=recipe["in_channels"], out_channels=1).to(device)
+    optimizer = Adam(model.parameters(), lr=recipe["lr"])
+    scheduler = CosineAnnealingLR(optimizer, T_max=recipe["epochs"], eta_min=1e-6)
     scaler = GradScaler(device=device)
 
     if args.bench:
@@ -144,14 +156,15 @@ def main():
         model.load_state_dict(st["model"]); optimizer.load_state_dict(st["optimizer"])
         scheduler.load_state_dict(st["scheduler"]); scaler.load_state_dict(st["scaler"])
         history, start_epoch = st["history"], st["epoch"]
-        torch.set_rng_state(st["torch_rng"]); np.random.set_state(st["np_rng"])
+        # map_location moved the saved CPU RNG state to the GPU; set_rng_state needs a CPU ByteTensor
+        torch.set_rng_state(st["torch_rng"].cpu()); np.random.set_state(st["np_rng"])
         print(f"Resuming fold {args.fold} after epoch {start_epoch}")
         with open(fold_dir / "resumed.txt", "a") as f:
             f.write(f"{datetime.now().isoformat(timespec='seconds')} resumed after epoch {start_epoch}\n")
     else:
         (fold_dir / "train_subjects.txt").write_text("\n".join(train_subjects) + "\n")
         (fold_dir / "test_subjects.txt").write_text("\n".join(test_subjects) + "\n")
-        cfg = {"fold": args.fold, "recipe": RECIPE, "n_train": len(train_subjects),
+        cfg = {"fold": args.fold, "recipe": recipe, "n_train": len(train_subjects),
                "n_test": len(test_subjects), "folds_csv": str(FOLDS_CSV.relative_to(PROJECT_ROOT)),
                "folds_sha256": sha256(FOLDS_CSV), "git_commit": git_commit(),
                "torch": torch.__version__, "cuda": torch.version.cuda,
@@ -160,9 +173,9 @@ def main():
         (fold_dir / "train_config.json").write_text(json.dumps(cfg, indent=2))
 
     print(f"Fold {args.fold}: {len(train_subjects)} train subjects, {len(loader)} iters/epoch, "
-          f"epochs {start_epoch + 1}..{RECIPE['epochs']}", flush=True)
+          f"epochs {start_epoch + 1}..{recipe['epochs']}", flush=True)
 
-    for epoch in range(start_epoch, RECIPE["epochs"]):
+    for epoch in range(start_epoch, recipe["epochs"]):
         t0 = time.time()
         model.train()
         loss_sum = dice_sum = seen = 0.0
@@ -174,7 +187,7 @@ def main():
                 loss = combined_loss(logits, y)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), RECIPE["grad_clip"])
+            torch.nn.utils.clip_grad_norm_(model.parameters(), recipe["grad_clip"])
             scaler.step(optimizer)
             scaler.update()
             bs = x.size(0)
@@ -182,7 +195,7 @@ def main():
             dice_sum += dice_scores(logits, y).sum().item()
             seen += bs
             if i % 50 == 0:
-                print(f"fold {args.fold} epoch {epoch + 1}/{RECIPE['epochs']} iter {i}/{len(loader)} "
+                print(f"fold {args.fold} epoch {epoch + 1}/{recipe['epochs']} iter {i}/{len(loader)} "
                       f"loss {loss_sum / seen:.4f}", flush=True)
         scheduler.step()
         row = {"epoch": epoch + 1, "train_loss": loss_sum / seen, "train_dice": dice_sum / seen,
@@ -195,7 +208,7 @@ def main():
                     "epoch": epoch + 1, "history": history,
                     "torch_rng": torch.get_rng_state(), "np_rng": np.random.get_state()}, tmp)
         tmp.replace(state_path)
-        print(f"fold {args.fold} epoch {epoch + 1}/{RECIPE['epochs']} done | loss {row['train_loss']:.4f} "
+        print(f"fold {args.fold} epoch {epoch + 1}/{recipe['epochs']} done | loss {row['train_loss']:.4f} "
               f"dice {row['train_dice']:.4f} | lr {row['lr']:.2e} | {row['epoch_time_sec']:.0f}s", flush=True)
 
     torch.save(model.state_dict(), final_ckpt)
